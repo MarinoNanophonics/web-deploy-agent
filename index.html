@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="hr">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -26,9 +26,8 @@
     }
     .me .bubble { background:#1a2430; }
     .bot .bubble { background:#111a22; }
-    .meta { opacity:.65; font-size:12px; margin-top:4px; }
     .bar { padding:12px; border-top:1px solid #1f2630; display:flex; gap:10px; }
-    input, textarea {
+    input {
       width:100%; padding:10px 12px; border-radius:12px;
       border:1px solid #1f2630; background:#0f1318; color:#e8eef7;
       outline:none;
@@ -65,13 +64,16 @@
       <div id="msgs" class="msgs"></div>
 
       <div class="bar">
-        <input id="msg" placeholder="Type a message..." />
-        <button id="send">Send</button>
+        <input id="msg" placeholder="Upiši poruku..." />
+        <button id="send">Pošalji</button>
       </div>
     </div>
   </div>
 
   <script>
+    // ✅ Kad workflow bude ACTIVE, koristi production URL:
+    // const WEBHOOK_URL = "https://diego-marino.app.n8n.cloud/webhook/chat";
+    // Za test u editoru koristi webhook-test:
     const WEBHOOK_URL = "https://diego-marino.app.n8n.cloud/webhook/chat";
 
     const elMsgs = document.getElementById("msgs");
@@ -94,7 +96,27 @@
       return bubble;
     }
 
-    async function send() {
+    async function postToWebhook(payload) {
+      const res = await fetch(WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+
+      // Prefer JSON, but accept text too
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        return await res.json();
+      }
+      return { answer: await res.text() };
+    }
+
+    async function sendMessage() {
       const message = elMsg.value.trim();
       if (!message) return;
 
@@ -108,23 +130,11 @@
         const payload = {
           conversation_id: elConv.value.trim() || "conv_001",
           user_id: elUid.value.trim() || "anon_123",
+          event: "message",          // ✅ normalna poruka
           message
         };
 
-        const res = await fetch(WEBHOOK_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        if (!res.ok) {
-          const txt = await res.text();
-          throw new Error(`HTTP ${res.status}: ${txt}`);
-        }
-
-        const data = await res.json();
-
-        // Expecting { "answer": "..." } — fallback if your webhook returns plain text
+        const data = await postToWebhook(payload);
         const answer = (data && (data.answer || data.output || data.text)) ?? JSON.stringify(data);
         pending.textContent = answer;
 
@@ -136,16 +146,37 @@
       }
     }
 
-    elSend.addEventListener("click", send);
+    // ✅ Auto-start: kad se stranica otvori, pošalji event=start bez message
+    async function startOnboarding() {
+      elSend.disabled = true;
+      const pending = addBubble("bot", "…");
+
+      try {
+        const payload = {
+          conversation_id: elConv.value.trim() || "conv_001",
+          user_id: elUid.value.trim() || "anon_123",
+          event: "start",            // ✅ okida IF true granu
+          message: ""                // može i bez, ali neka bude konzistentno
+        };
+
+        const data = await postToWebhook(payload);
+        const answer = (data && (data.answer || data.output || data.text)) ?? JSON.stringify(data);
+        pending.textContent = answer;
+
+      } catch (err) {
+        pending.textContent = "Error: " + (err.message || err);
+      } finally {
+        elSend.disabled = false;
+        elMsg.focus();
+      }
+    }
+
+    elSend.addEventListener("click", sendMessage);
     elMsg.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") send();
+      if (e.key === "Enter") sendMessage();
     });
 
-    // Seed message
-    addBubble("bot", "Hi! Ask me something nutrition-related.");
+    window.addEventListener("load", startOnboarding);
   </script>
 </body>
 </html>
-
-
-
